@@ -1,0 +1,19 @@
+POST http://localhost:8896/api/transaction/add
+Content-Type: application/json
+
+{
+  "transaction": {
+    "from": {
+      "coin": "",
+      "amount": 10.0,
+      "wallet": ""
+    },
+    "to": {
+      "coin": ""
+    }
+  }
+}
+
+
+###
+
