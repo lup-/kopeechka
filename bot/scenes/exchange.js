@@ -2,6 +2,36 @@ const { Scenes } = require('telegraf');
 const { BaseScene } = Scenes;
 const { menu } = require('../lib/helpers');
 
+function getRouteName(route, isToRoute) {
+    let name = isToRoute
+        ? route.toInfo.name
+        : route.fromInfo.name;
+
+    let currencyCode = isToRoute
+        ? route.to
+        : route.from;
+
+    let needToAddRub = currencyCode.indexOf('RUB') !== -1 && currencyCode !== 'RUB';
+    if (needToAddRub) {
+        name = name + ' (RUB)';
+    }
+
+    let needToAddUah = currencyCode.indexOf('UAH') !== -1 && currencyCode !== 'UAH';
+    if (needToAddUah) {
+        name = name + ' (UAH)';
+    }
+
+    return name;
+}
+function allowedCurrency(route) {
+    let isNotDuplicatedRubRoute = route.to !== 'RUB' && route.from !== 'RUB';
+    let isNotDuplicatedUahRoute = route.to !== 'UAH' && route.from !== 'UAH';
+    return  isNotDuplicatedRubRoute && isNotDuplicatedUahRoute;
+}
+function isFiatCurrency(code) {
+    return /(RUB|UAH)$/.test(code) || code === 'USD';
+}
+
 module.exports = function () {
     const scene = new BaseScene('exchange');
     scene.command('/start', ctx => {
@@ -13,35 +43,85 @@ module.exports = function () {
         let routes = await ctx.exchanger.getRoutes();
         ctx.scene.state.routes = routes;
 
-        let buttons = routes.map(route => {
-            let code = route.from+':'+route.to;
-            let text = route.fromInfo.name + ' -> ' + route.toInfo.name;
-            return  {code, text};
-        });
+        let toRoutes = routes
+            .filter(allowedCurrency)
+            .reduce((hash, route) => {
+                hash[route.to] = getRouteName(route, true);
+                return hash;
+            }, {});
+
+        let buttons = Object.keys(toRoutes)
+            .map(routeCode => {
+                let code = 'to:'+routeCode;
+                let text = toRoutes[routeCode];
+                return  {code, text};
+            });
 
         await ctx.reply(
-            'Выберите направление обмена',
+            'Какую валюту хотите получить?',
             menu(buttons, 1)
-        )
+        );
     });
 
-    scene.action(/.*?:.*?/,async ctx => {
+    scene.action(/to:.*?/,async ctx => {
         let routeCode = ctx.update.callback_query ? ctx.update.callback_query.data : null;
         if (!routeCode) {
             return ctx.scene.reenter();
         }
 
-        let [fromCurrency, toCurrency] = routeCode.split(':');
+        let [, toCurrency] = routeCode.split(':');
+        let isToFiat = isFiatCurrency(toCurrency);
+        ctx.scene.state.toCurrency = toCurrency;
+
+        let routes = ctx.scene.state.routes;
+
+        let fromRoutes = routes
+            .filter(allowedCurrency)
+            .filter(route => route.from !== toCurrency)
+            .filter(route => {
+                return isToFiat
+                    ? isFiatCurrency(route.from) !== isToFiat
+                    : true;
+            })
+            .reduce((hash, route) => {
+                hash[route.from] = getRouteName(route, false);
+                return hash;
+            }, {});
+
+        let buttons = Object.keys(fromRoutes)
+            .map(routeCode => {
+                let code = 'from:'+routeCode;
+                let text = fromRoutes[routeCode];
+                return  {code, text};
+            });
+
+        await ctx.reply(
+            'Какую валюту отдаете?',
+            menu(buttons, 1)
+        );
+    });
+
+    scene.action(/from:.*?/,async ctx => {
+        let routeCode = ctx.update.callback_query ? ctx.update.callback_query.data : null;
+        if (!routeCode) {
+            return ctx.scene.reenter();
+        }
+
+        let [, fromCurrency] = routeCode.split(':');
+        let toCurrency = ctx.scene.state.toCurrency;
+
         let route = ctx.scene.state.routes.find(route => route.from === fromCurrency && route.to === toCurrency);
         ctx.scene.state.route = route;
 
         let rate = route.rateInfo;
-        let message = `${route.fromInfo.name} в ${route.toInfo.name}
+        let message = `${getRouteName(route, false)} в ${getRouteName(route, true)}
 
 Максимальная сумма для обмена: *${route.max} ${route.from}*\nКурс: ${rate.rate} ${rate.inCurrency}`;
         message = message
             .replace(/\./g, '\\.')
-            .replace(/\-/g, '\\-');
+            .replace(/\-/g, '\\-')
+            .replace(/\(/g, '\\(')
+            .replace(/\)/g, '\\)');
 
         await ctx.replyWithMarkdownV2(
             message,
