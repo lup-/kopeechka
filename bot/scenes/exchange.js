@@ -204,7 +204,7 @@ module.exports = function () {
             }
         }
 
-        ctx.state.scene.textType = null;
+        ctx.scene.state.textType = null;
     });
 
     scene.action(/final_(yes|no)/,async ctx => {
@@ -227,6 +227,9 @@ module.exports = function () {
 
         if (transaction) {
             await ctx.reply(`${transaction.id}\nЗапущен процесс обмена валют`);
+        }
+        else {
+            await ctx.reply(`Ошибка запуска обмена\n${ctx.exchanger.lastError}`);
         }
 
         return ctx.scene.leave();
